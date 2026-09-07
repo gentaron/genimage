@@ -56,9 +56,13 @@ export function NotesDrawer({ open, onClose }: { open: boolean; onClose: () => v
           <section>
             <h3 className="mb-1.5 text-[13.5px] font-semibold">Backends</h3>
             <p style={{ color: "var(--text-muted)" }}>
-              The studio talks to whichever backend is reachable. Only ComfyUI actually loads the
-              LoRA stack — the hosted free tiers run their own models, so a run there uses your
-              prompt and trigger words but not your weights.
+              The studio uses whichever backend is reachable. The thing worth knowing up front:{" "}
+              <strong style={{ color: "var(--text)" }}>
+                free and LoRA-capable do not overlap in the cloud
+              </strong>
+              . Free hosted models run their own weights, so your LoRA stack contributes only its
+              trigger words. Applying the real weights means either your own GPU or a paid hosted
+              one.
             </p>
             <ul className="mt-2 space-y-1.5">
               {(catalog?.providers ?? []).map((provider) => (
@@ -71,9 +75,22 @@ export function NotesDrawer({ open, onClose }: { open: boolean; onClose: () => v
                   <span>
                     <strong>{provider.label}</strong>
                     <span style={{ color: "var(--text-faint)" }}> — {provider.detail}</span>
-                    {provider.capabilities.loras && (
-                      <span style={{ color: "var(--ok)" }}> · applies LoRAs</span>
-                    )}
+                    <span className="mt-0.5 block text-[12px]">
+                      <span
+                        style={{ color: provider.capabilities.loras ? "var(--ok)" : "var(--warn)" }}
+                      >
+                        {provider.capabilities.loras ? "applies LoRA weights" : "no LoRA weights"}
+                      </span>
+                      <span style={{ color: "var(--text-faint)" }}>
+                        {" · "}
+                        {provider.pricing === "free"
+                          ? "free"
+                          : provider.pricing === "credits"
+                            ? "free credit, then paid"
+                            : "paid per second"}
+                        {provider.selfHosted ? " · needs your own GPU" : ""}
+                      </span>
+                    </span>
                   </span>
                 </li>
               ))}
@@ -81,7 +98,26 @@ export function NotesDrawer({ open, onClose }: { open: boolean; onClose: () => v
           </section>
 
           <section>
-            <h3 className="mb-1.5 text-[13.5px] font-semibold">Running the real stack locally</h3>
+            <h3 className="mb-1.5 text-[13.5px] font-semibold">LoRAs in the cloud</h3>
+            <p style={{ color: "var(--text-muted)" }}>
+              fal.ai and Replicate load LoRAs over HTTP, so each one needs a public URL to its{" "}
+              <code className="font-mono">.safetensors</code> file. Point{" "}
+              <code className="font-mono">GENIMAGE_WEIGHTS</code> at your own copies:
+            </p>
+            <pre
+              className="mt-2 overflow-x-auto rounded-lg p-2.5 font-mono text-[11px]"
+              style={{ background: "var(--sunken)", border: "1px solid var(--border)" }}
+            >
+{`GENIMAGE_WEIGHTS={"shexyo-v3":"https://…/shexyo_v3.safetensors"}`}
+            </pre>
+            <p className="mt-2" style={{ color: "var(--text-muted)" }}>
+              A LoRA with no URL is skipped and the job says so, rather than quietly rendering
+              without it.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="mb-1.5 text-[13.5px] font-semibold">Running it free, on your own GPU</h3>
             <ol className="list-decimal space-y-1.5 pl-5" style={{ color: "var(--text-muted)" }}>
               <li>
                 Start ComfyUI: <code className="font-mono">python main.py --listen 127.0.0.1 --port 8188</code>
@@ -135,6 +171,15 @@ export function NotesDrawer({ open, onClose }: { open: boolean; onClose: () => v
               <li>Quality tags go last — the Advanced panel appends them for you.</li>
               <li>Illustrious wants CLIP skip 2. SDXL and FLUX want 1.</li>
             </ul>
+          </section>
+
+          <section>
+            <h3 className="mb-1.5 text-[13.5px] font-semibold">Where things are stored</h3>
+            <p style={{ color: "var(--text-muted)" }}>
+              Job history lives in this browser, not on the server — it will not follow you to
+              another device, and clearing site data clears it. Images either sit on the backend&apos;s
+              own CDN or, when a backend hands back raw bytes, in this deployment&apos;s blob storage.
+            </p>
           </section>
 
           <section>

@@ -19,6 +19,12 @@ import {
   writeSettings,
 } from "./settings-store";
 import {
+  getHistorySnapshot,
+  getServerHistorySnapshot,
+  subscribeHistory,
+  writeHistory,
+} from "./history-store";
+import {
   DEFAULT_SETTINGS,
   settingsFromJob,
   type Catalog,
@@ -45,6 +51,7 @@ interface StudioValue {
   generate: () => Promise<void>;
   cancelJob: (id: string) => Promise<void>;
   removeJob: (id: string) => Promise<void>;
+  clearHistory: () => void;
 
   /** Derived, kept here so the composer and the rail cannot disagree. */
   derived: {
@@ -70,7 +77,7 @@ export function useStudio(): StudioValue {
   return value;
 }
 
-const POLL_INTERVAL_MS = 700;
+const POLL_INTERVAL_MS = 1200;
 
 export function StudioProvider({ children }: { children: React.ReactNode }) {
   const settings = useSyncExternalStore(
@@ -79,7 +86,11 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     getServerSettingsSnapshot,
   );
   const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const jobs = useSyncExternalStore(
+    subscribeHistory,
+    getHistorySnapshot,
+    getServerHistorySnapshot,
+  );
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,21 +101,18 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     void (async () => {
       try {
-        const [catalogRes, jobsRes] = await Promise.all([
-          fetch("/api/catalog"),
-          fetch("/api/jobs?limit=24"),
-        ]);
-        if (cancelled) return;
-        if (catalogRes.ok) setCatalog((await catalogRes.json()) as Catalog);
-        if (jobsRes.ok) setJobs(((await jobsRes.json()) as { jobs: Job[] }).jobs);
+        const res = await fetch("/api/catalog");
+        if (cancelled || !res.ok) return;
+        setCatalog((await res.json()) as Catalog);
       } catch {
-        if (!cancelled) setError("Could not reach the server. Is `npm run dev` still running?");
+        if (!cancelled) setError("Could not reach the server.");
       }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
 
   // Release the object URL when the reference is replaced or the page unmounts.
   useEffect(() => {
@@ -242,7 +250,7 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
         setError(json.error ?? "The job could not be queued.");
         return;
       }
-      setJobs((prev) => [json.job!, ...prev]);
+      writeHistory((prev) => [json.job!, ...prev]);
       setActiveJobId(json.job.id);
       // Remember the seed the server actually rolled, so "lock seed" reproduces it.
       if (!settings.lockSeed) writeSettings((prev) => ({ ...prev, seed: json.job!.request.seed }));
@@ -253,27 +261,26 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     }
   }, [catalog, derived.activeLoras, reference, settings, submitting]);
 
-  // Poll while anything is in flight, then stop. One timer for all jobs.
+  // Poll while anything is in flight, then stop. One request for all of them.
   useEffect(() => {
-    const pending = jobs.filter((j) => j.status === "queued" || j.status === "running");
+    const pending = jobs.filter((j) => j.status === "running" || j.status === "queued");
     if (pending.length === 0) return;
 
     let stopped = false;
     const tick = async () => {
-      const updated = await Promise.all(
-        pending.map(async (job) => {
-          try {
-            const res = await fetch(`/api/jobs/${job.id}`, { cache: "no-store" });
-            if (!res.ok) return null;
-            return ((await res.json()) as { job: Job }).job;
-          } catch {
-            return null;
-          }
-        }),
-      );
-      if (stopped) return;
-      const byId = new Map(updated.filter((j): j is Job => j !== null).map((j) => [j.id, j]));
-      if (byId.size > 0) setJobs((prev) => prev.map((j) => byId.get(j.id) ?? j));
+      try {
+        const res = await fetch("/api/poll", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jobs: pending }),
+        });
+        if (!res.ok || stopped) return;
+        const { jobs: updated } = (await res.json()) as { jobs: Job[] };
+        const byId = new Map(updated.map((job) => [job.id, job]));
+        writeHistory((prev) => prev.map((job) => byId.get(job.id) ?? job));
+      } catch {
+        // Transient network error — the next tick tries again.
+      }
     };
 
     const timer = setInterval(() => void tick(), POLL_INTERVAL_MS);
@@ -284,16 +291,28 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
   }, [jobs]);
 
   const cancelJob = useCallback(async (id: string) => {
-    await fetch(`/api/jobs/${id}?action=cancel`, { method: "DELETE" }).catch(() => null);
-    setJobs((prev) =>
-      prev.map((j) => (j.id === id ? { ...j, status: "cancelled", finishedAt: Date.now() } : j)),
+    const target = jobs.find((job) => job.id === id);
+    writeHistory((prev) =>
+      prev.map((job) => (job.id === id ? { ...job, status: "cancelled", finishedAt: Date.now() } : job)),
     );
-  }, []);
+    // Tell the backend too — on a per-second provider this is what stops the bill.
+    if (target?.handle) {
+      await fetch("/api/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ job: target }),
+      }).catch(() => null);
+    }
+  }, [jobs]);
 
   const removeJob = useCallback(async (id: string) => {
-    setJobs((prev) => prev.filter((j) => j.id !== id));
+    writeHistory((prev) => prev.filter((job) => job.id !== id));
     setActiveJobId((prev) => (prev === id ? null : prev));
-    await fetch(`/api/jobs/${id}`, { method: "DELETE" }).catch(() => null);
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    writeHistory([]);
+    setActiveJobId(null);
   }, []);
 
   const activeJob = useMemo(
@@ -317,6 +336,7 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     generate,
     cancelJob,
     removeJob,
+    clearHistory,
     derived,
   };
 

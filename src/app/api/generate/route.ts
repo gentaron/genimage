@@ -14,15 +14,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    const job = await submit(body);
-    return NextResponse.json({ job }, { status: 202 });
+    const job = await submit(body, request.signal);
+    // 200 even for a failed job: the request itself succeeded, and the job
+    // record carries the error so the browser can show it in place.
+    return NextResponse.json({ job });
   } catch (error) {
     if (error instanceof RequestError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     console.error("[generate]", error);
     return NextResponse.json(
-      { error: `Could not queue the job: ${(error as Error).message}` },
+      { error: `Could not start the job: ${(error as Error).message}` },
       { status: 500 },
     );
   }

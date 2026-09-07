@@ -4,15 +4,19 @@ import {
   type GeneratedImage,
   type ImageProvider,
   type ProviderContext,
-  type ProviderResult,
+  type StartResult,
 } from "./types";
 
 /**
- * Hugging Face Inference — free tier with an account token.
+ * Hugging Face Inference — small monthly credit on a free account.
  *
- * Serves the checkpoint itself when the catalog entry declares a repo id, which
- * makes it the best free option for SDXL and FLUX. LoRA weights are still not
- * applied: the serverless endpoints load the base repo only.
+ * Serves the checkpoint itself when the catalog entry declares a repo id, so it
+ * is a good SDXL and FLUX option. LoRA weights are not applied: the serverless
+ * endpoints load the base repo only.
+ *
+ * Inference here is a single blocking call, which can outlast a serverless
+ * request budget on a large image. It is best suited to a self-hosted
+ * deployment; on Netlify prefer fal or Replicate, whose queues are asynchronous.
  */
 
 const BASE_URL = (process.env.HF_ROUTER_URL ?? "https://router.huggingface.co/hf-inference/models").replace(
@@ -25,7 +29,7 @@ const FALLBACK_MODEL = process.env.HF_MODEL ?? "stabilityai/stable-diffusion-xl-
 export const huggingfaceProvider: ImageProvider = {
   id: "huggingface",
   label: "Hugging Face",
-  summary: "Free tier with an account token. Serves SDXL and FLUX repos; LoRA weights are not applied.",
+  summary: "Small free credit with an account token. Serves SDXL and FLUX repos; no LoRA weights.",
   requiresKey: true,
   capabilities: {
     textToImage: true,
@@ -61,7 +65,7 @@ export const huggingfaceProvider: ImageProvider = {
     }
   },
 
-  async generate(ctx: ProviderContext): Promise<ProviderResult> {
+  async start(ctx: ProviderContext): Promise<StartResult> {
     if (!TOKEN) throw new ProviderError("HF_TOKEN is not set.");
 
     const { request: r } = ctx;
@@ -126,15 +130,17 @@ export const huggingfaceProvider: ImageProvider = {
       }
 
       images.push({
-        bytes: new Uint8Array(await res.arrayBuffer()),
-        mimeType: contentType.split(";")[0],
+        source: {
+          kind: "bytes",
+          bytes: new Uint8Array(await res.arrayBuffer()),
+          mimeType: contentType.split(";")[0],
+        },
         seed: r.seed + i,
         width: r.width,
         height: r.height,
       });
-      ctx.onProgress((i + 1) / r.batchSize);
     }
 
-    return { images, warnings };
+    return { status: "done", images, warnings };
   },
 };

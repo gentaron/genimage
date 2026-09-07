@@ -56,25 +56,34 @@ export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancell
 
 export interface ImageRecord {
   id: string;
-  jobId: string;
   seed: number;
   width: number;
   height: number;
-  /** Relative path inside the data directory. */
-  file: string;
-  mimeType: string;
+  /**
+   * Set when the provider hosts the image and the browser loads it directly.
+   * Otherwise the bytes are in our own store, served from `/api/images/<id>`.
+   */
+  url: string | null;
   createdAt: number;
 }
 
+/**
+ * A render.
+ *
+ * Jobs are not kept on the server: the browser owns its history and hands the
+ * signed `handle` back when it polls. `handle` is opaque and HMAC-signed, so it
+ * cannot be forged or pointed at someone else's upstream request.
+ */
 export interface Job {
   id: string;
   status: JobStatus;
   mode: Mode;
   provider: string;
   request: ResolvedRequest;
+  handle: { data: string; sig: string } | null;
   images: ImageRecord[];
   error: string | null;
-  /** 0–1; providers report it when they can, otherwise it is time-estimated. */
+  /** 0–1. Providers report it when they can. */
   progress: number;
   queuedAt: number;
   startedAt: number | null;
@@ -104,5 +113,9 @@ export interface ProviderStatus {
   available: boolean;
   detail: string;
   requiresKey: boolean;
+  /** True when the backend needs to be reachable from the server, not the cloud. */
+  selfHosted: boolean;
+  /** Rough cost signal shown in the picker. */
+  pricing: "free" | "credits" | "paid";
   capabilities: ProviderCapabilities;
 }

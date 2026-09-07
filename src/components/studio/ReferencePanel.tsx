@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState } from "react";
-import Image from "next/image";
 import { IconClose, IconImage, IconPlus } from "@/components/ui/icons";
 import { Section } from "@/components/ui/primitives";
 import { useStudio } from "./StudioProvider";
@@ -46,13 +45,11 @@ export function ReferencePanel() {
 
       {reference ? (
         <div className="relative w-fit">
-          {/* Object URL of a local file — Next's optimizer cannot process it. */}
-          <Image
+          {/* An object URL for a local file; nothing to optimise. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={reference.preview}
             alt={reference.name}
-            width={96}
-            height={96}
-            unoptimized
             className="h-24 w-24 rounded-lg object-cover"
             style={{ border: "1px solid var(--border)" }}
           />

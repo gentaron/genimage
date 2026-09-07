@@ -12,37 +12,63 @@ export interface ProviderContext {
   checkpoint: Checkpoint;
   loras: ResolvedLora[];
   referenceImage: { bytes: Buffer; mimeType: string } | null;
-  /** 0–1. Providers call this as often as they can; the UI interpolates. */
-  onProgress: (progress: number) => void;
   signal: AbortSignal;
 }
 
+/**
+ * Where an image lives.
+ *
+ * `url` means the provider already hosts it and the browser can load it
+ * directly — no bytes ever pass through our server, which is what keeps a
+ * serverless deployment inside its request budget. `bytes` means we have to
+ * persist it ourselves.
+ */
+export type ImageSource =
+  | { kind: "url"; url: string }
+  | { kind: "bytes"; bytes: Uint8Array; mimeType: string };
+
 export interface GeneratedImage {
-  bytes: Uint8Array;
-  mimeType: string;
+  source: ImageSource;
   seed: number;
   width: number;
   height: number;
 }
 
-export interface ProviderResult {
-  images: GeneratedImage[];
-  /** Surfaced in the UI, e.g. "LoRA weights were not applied by this backend". */
-  warnings: string[];
-}
+/**
+ * Result of kicking off a render.
+ *
+ * `done` finished inside the request. `pending` means the work is running on the
+ * provider's side and `handle` is whatever `poll` needs to check on it — it is
+ * persisted with the job and round-tripped through the browser, so it must be
+ * JSON-serialisable and must never contain a credential.
+ */
+export type StartResult =
+  | { status: "done"; images: GeneratedImage[]; warnings: string[] }
+  | { status: "pending"; handle: unknown; warnings: string[] };
+
+export type PollResult =
+  | { status: "done"; images: GeneratedImage[]; warnings?: string[] }
+  | { status: "pending"; progress?: number; warnings?: string[] }
+  | { status: "failed"; error: string };
 
 export interface ImageProvider {
   id: string;
   label: string;
-  /** One line shown in the provider picker. */
   summary: string;
   requiresKey: boolean;
   capabilities: ProviderCapabilities;
-  /** Cheap synchronous check: is the config present at all? */
   isConfigured(): boolean;
-  /** Network check with a short timeout. */
   health(signal?: AbortSignal): Promise<{ available: boolean; detail: string }>;
-  generate(ctx: ProviderContext): Promise<ProviderResult>;
+  /** Kick off a render. Must return quickly enough for a serverless request. */
+  start(ctx: ProviderContext): Promise<StartResult>;
+  /** Required whenever `start` can return `pending`. */
+  poll?(handle: unknown, ctx: ProviderContext): Promise<PollResult>;
+  /**
+   * Stop a pending job upstream. Worth implementing on any backend that bills
+   * by the second — abandoning the browser tab should not keep the meter
+   * running. Best-effort: failures are swallowed by the caller.
+   */
+  cancel?(handle: unknown, signal: AbortSignal): Promise<void>;
 }
 
 export class ProviderError extends Error {

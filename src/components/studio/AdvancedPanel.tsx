@@ -7,6 +7,10 @@ import { useStudio } from "./StudioProvider";
 export function AdvancedPanel() {
   const { catalog, settings, update, derived } = useStudio();
   const checkpoint = catalog?.checkpoints.find((c) => c.id === settings.checkpointId);
+  const chosenProvider =
+    settings.provider === "auto"
+      ? catalog?.providers.find((p) => p.available)
+      : catalog?.providers.find((p) => p.id === settings.provider);
 
   const acceleratorPinned = Boolean(derived.acceleratorNote);
 
@@ -104,6 +108,7 @@ export function AdvancedPanel() {
           <label className="text-[12px]" style={{ color: "var(--text-muted)" }}>
             Sampler
             <select
+              aria-label="Sampler"
               value={derived.sampler}
               onChange={(e) => update({ sampler: e.target.value })}
               className="field mt-1 w-full px-2 py-1.5 text-[12.5px]"
@@ -118,6 +123,7 @@ export function AdvancedPanel() {
           <label className="text-[12px]" style={{ color: "var(--text-muted)" }}>
             Scheduler
             <select
+              aria-label="Scheduler"
               value={derived.scheduler}
               onChange={(e) => update({ scheduler: e.target.value })}
               className="field mt-1 w-full px-2 py-1.5 text-[12.5px]"
@@ -190,25 +196,43 @@ export function AdvancedPanel() {
         )}
 
         {/* Backend */}
-        <label className="block text-[12px]" style={{ color: "var(--text-muted)" }}>
-          <span className="flex items-center gap-1">
-            Backend
-            <HelpDot content="Auto picks the first reachable backend in preference order: ComfyUI, Hugging Face, Pollinations, then the offline preview renderer." />
-          </span>
-          <select
-            value={settings.provider}
-            onChange={(e) => update({ provider: e.target.value })}
-            className="field mt-1 w-full px-2 py-1.5 text-[12.5px]"
-          >
-            <option value="auto">Auto</option>
-            {(catalog?.providers ?? []).map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.label}
-                {provider.available ? "" : " (unavailable)"}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div>
+          <label className="block text-[12px]" style={{ color: "var(--text-muted)" }}>
+            <span className="flex items-center gap-1">
+              Backend
+              <HelpDot content="Auto picks the first reachable backend in preference order: ComfyUI, fal.ai, Replicate, Hugging Face, Pollinations, then the offline renderer." />
+            </span>
+            <select
+              aria-label="Backend"
+              value={settings.provider}
+              onChange={(e) => update({ provider: e.target.value })}
+              className="field mt-1 w-full px-2 py-1.5 text-[12.5px]"
+            >
+              <option value="auto">Auto</option>
+              {(catalog?.providers ?? []).map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.label}
+                  {provider.capabilities.loras ? " · LoRA" : ""}
+                  {provider.pricing === "free" ? " · free" : provider.pricing === "paid" ? " · paid" : " · credits"}
+                  {provider.available ? "" : " (unavailable)"}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {chosenProvider && !chosenProvider.capabilities.loras && derived.activeLoras.length > 0 && (
+            <p className="mt-1.5 text-[11.5px]" style={{ color: "var(--warn)" }}>
+              {chosenProvider.label} does not load LoRA weights — only the trigger words reach the
+              prompt. fal.ai, Replicate or a local ComfyUI apply the real stack.
+            </p>
+          )}
+          {chosenProvider?.pricing === "paid" && (
+            <p className="mt-1.5 text-[11.5px]" style={{ color: "var(--text-faint)" }}>
+              {chosenProvider.label} bills per second of GPU time. The credit figure on the Generate
+              button is an estimate of relative cost, not a quote.
+            </p>
+          )}
+        </div>
       </div>
     </Section>
   );

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
 import {
   IconClose,
   IconDownload,
@@ -14,6 +13,8 @@ import {
 import { dimensionsFor } from "@/lib/catalog";
 import type { ImageRecord, Job } from "@/lib/types";
 import { Lightbox } from "./Lightbox";
+import { ResultImage } from "./ResultImage";
+import { imageSrc, isExternal } from "./state";
 import { useStudio } from "./StudioProvider";
 
 function relativeTime(timestamp: number): string {
@@ -99,32 +100,30 @@ function JobCard({ job, onOpen }: { job: Job; onOpen: (image: ImageRecord) => vo
             className="group relative overflow-hidden rounded-lg"
             style={{ aspectRatio: `${image.width} / ${image.height}`, background: "var(--sunken)" }}
           >
-            <button
-              type="button"
+            <ResultImage
+              image={image}
+              alt={`${job.request.prompt.slice(0, 80)} — seed ${image.seed}`}
+              className="h-full w-full cursor-pointer object-cover transition-transform duration-300 group-hover:scale-[1.03]"
               onClick={() => onOpen(image)}
-              className="absolute inset-0 h-full w-full"
-              aria-label={`Open image, seed ${image.seed}`}
-            >
-              <Image
-                src={`/api/images/${image.id}`}
-                alt={`${job.request.prompt.slice(0, 80)} — seed ${image.seed}`}
-                fill
-                unoptimized
-                sizes="(max-width: 640px) 50vw, 25vw"
-                className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-              />
-            </button>
-            {/* Sits above the button, so the link is not nested inside it. */}
+            />
+            {/* Sits above the image, so the link is not nested inside a button. */}
             <span
               className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between px-2 py-1.5 text-[10.5px] opacity-0 transition-opacity group-hover:opacity-100"
               style={{ background: "linear-gradient(transparent, rgba(0,0,0,0.75))", color: "#fff" }}
             >
               <span className="font-mono">{image.seed}</span>
               <a
-                href={`/api/images/${image.id}?download`}
-                download
+                href={imageSrc(image) + (isExternal(image) ? "" : "?download")}
+                {...(isExternal(image)
+                  ? { target: "_blank", rel: "noreferrer" }
+                  : { download: true })}
                 className="pointer-events-auto rounded p-0.5 hover:bg-white/20"
-                aria-label="Download"
+                aria-label={isExternal(image) ? "Open full size" : "Download"}
+                title={
+                  isExternal(image)
+                    ? "Opens on the provider's CDN — save it from there"
+                    : "Download"
+                }
               >
                 <IconDownload size={13} />
               </a>

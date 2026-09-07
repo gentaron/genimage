@@ -5,15 +5,21 @@ import {
   ProviderError,
   type GeneratedImage,
   type ImageProvider,
+  type PollResult,
   type ProviderContext,
-  type ProviderResult,
+  type StartResult,
 } from "./types";
 
 /**
- * ComfyUI backend — the only provider that genuinely loads the LoRA stack.
+ * ComfyUI backend — full local control of the LoRA stack, samplers and hires fix.
  *
  * Point `COMFYUI_URL` at a running instance whose `models/checkpoints` and
- * `models/loras` folders contain the filenames declared in the catalog.
+ * `models/loras` folders contain the filenames declared in the catalog. This is
+ * a self-hosted backend: a serverless deployment cannot reach a ComfyUI running
+ * on someone's laptop, so it only shows as available when the URL resolves.
+ *
+ * ComfyUI's own API is already submit-then-poll (`/prompt` then `/history`),
+ * which maps directly onto this interface.
  */
 
 const BASE_URL = (process.env.COMFYUI_URL ?? "http://127.0.0.1:8188").replace(/\/+$/, "");
@@ -48,54 +54,17 @@ async function uploadReference(
   return json.subfolder ? `${json.subfolder}/${json.name}` : json.name;
 }
 
-/**
- * Subscribes to ComfyUI's websocket for real sampler progress. Failure is
- * non-fatal: the caller still polls `/history`, it just loses the fine-grained
- * progress bar.
- */
-function attachProgress(
-  clientId: string,
-  promptId: string,
-  onProgress: (p: number) => void,
-): () => void {
-  let socket: WebSocket | null = null;
-  try {
-    const wsUrl = `${BASE_URL.replace(/^http/, "ws")}/ws?clientId=${encodeURIComponent(clientId)}`;
-    socket = new WebSocket(wsUrl);
-    socket.addEventListener("message", (event) => {
-      if (typeof event.data !== "string") return;
-      try {
-        const msg = JSON.parse(event.data) as {
-          type: string;
-          data?: { prompt_id?: string; value?: number; max?: number };
-        };
-        if (msg.data?.prompt_id && msg.data.prompt_id !== promptId) return;
-        if (msg.type === "progress" && msg.data?.max) {
-          onProgress(Math.min(0.99, (msg.data.value ?? 0) / msg.data.max));
-        } else if (msg.type === "executing" && msg.data?.prompt_id === promptId) {
-          onProgress(0.05);
-        }
-      } catch {
-        // Malformed frame — ignore and keep listening.
-      }
-    });
-    socket.addEventListener("error", () => {});
-  } catch {
-    socket = null;
-  }
-  return () => {
-    try {
-      socket?.close();
-    } catch {
-      /* already closed */
-    }
-  };
+interface ComfyHandle {
+  promptId: string;
+  width: number;
+  height: number;
+  seed: number;
 }
 
 export const comfyuiProvider: ImageProvider = {
   id: "comfyui",
   label: "ComfyUI",
-  summary: "Self-hosted. Full LoRA stack, samplers, img2img and hires fix — the intended backend.",
+  summary: "Self-hosted. Full LoRA stack, samplers, img2img and hires fix — free, but needs your own GPU.",
   requiresKey: false,
   capabilities: {
     textToImage: true,
@@ -117,9 +86,7 @@ export const comfyuiProvider: ImageProvider = {
     try {
       const res = await fetchWithTimeout(`${BASE_URL}/system_stats`, { timeoutMs: 2500 }, signal);
       if (!res.ok) return { available: false, detail: `HTTP ${res.status} from ${BASE_URL}` };
-      const stats = (await res.json()) as {
-        devices?: { name?: string; vram_total?: number }[];
-      };
+      const stats = (await res.json()) as { devices?: { name?: string; vram_total?: number }[] };
       const device = stats.devices?.[0];
       const vram = device?.vram_total ? ` · ${Math.round(device.vram_total / 1024 ** 3)} GB VRAM` : "";
       return { available: true, detail: `${device?.name ?? "connected"}${vram}` };
@@ -131,9 +98,8 @@ export const comfyuiProvider: ImageProvider = {
     }
   },
 
-  async generate(ctx: ProviderContext): Promise<ProviderResult> {
+  async start(ctx: ProviderContext): Promise<StartResult> {
     const warnings: string[] = [];
-    const clientId = crypto.randomUUID();
 
     let uploadedName: string | null = null;
     if (ctx.referenceImage) {
@@ -146,14 +112,14 @@ export const comfyuiProvider: ImageProvider = {
       warnings.push(`${ctx.request.mode} mode needs a reference image; ran a plain text-to-image instead.`);
     }
 
-    const { graph, outputNodeId } = buildWorkflow(ctx, uploadedName);
+    const { graph } = buildWorkflow(ctx, uploadedName);
 
     const queued = await fetchWithTimeout(
       `${BASE_URL}/prompt`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: graph, client_id: clientId }),
+        body: JSON.stringify({ prompt: graph, client_id: crypto.randomUUID() }),
         timeoutMs: 30_000,
       },
       ctx.signal,
@@ -175,59 +141,74 @@ export const comfyuiProvider: ImageProvider = {
       throw new ProviderError(`ComfyUI rejected the workflow: ${detail}`);
     }
 
-    const { prompt_id: promptId } = (await queued.json()) as { prompt_id: string };
-    const detachProgress = attachProgress(clientId, promptId, ctx.onProgress);
+    const { prompt_id: promptId } = (await queued.json()) as { prompt_id?: string };
+    if (!promptId) throw new ProviderError("ComfyUI did not return a prompt id.");
 
-    try {
-      const deadline = Date.now() + Number(process.env.COMFYUI_TIMEOUT_MS ?? 600_000);
-      let entry: HistoryEntry | undefined;
+    const handle: ComfyHandle = {
+      promptId,
+      width: ctx.request.width,
+      height: ctx.request.height,
+      seed: ctx.request.seed,
+    };
+    return { status: "pending", handle, warnings };
+  },
 
-      while (Date.now() < deadline) {
-        if (ctx.signal.aborted) throw new ProviderError("Cancelled.");
-        const res = await fetchWithTimeout(
-          `${BASE_URL}/history/${promptId}`,
-          { timeoutMs: 15_000 },
-          ctx.signal,
-        );
-        if (res.ok) {
-          const history = (await res.json()) as Record<string, HistoryEntry>;
-          entry = history[promptId];
-          if (entry?.status?.completed || entry?.outputs) break;
-          if (entry?.status?.status_str === "error") {
-            throw new ProviderError(
-              `ComfyUI execution failed: ${JSON.stringify(entry.status.messages ?? []).slice(0, 500)}`,
-            );
-          }
-        }
-        await new Promise((r) => setTimeout(r, 900));
-      }
+  async poll(rawHandle: unknown, ctx: ProviderContext): Promise<PollResult> {
+    const handle = rawHandle as ComfyHandle;
+    if (!handle?.promptId) return { status: "failed", error: "Missing the ComfyUI prompt handle." };
 
-      if (!entry) throw new ProviderError("ComfyUI did not finish before the timeout.", true);
-
-      const outputs = entry.outputs[outputNodeId]?.images ?? Object.values(entry.outputs).flatMap((o) => o.images ?? []);
-      if (outputs.length === 0) throw new ProviderError("ComfyUI produced no images.");
-
-      const images: GeneratedImage[] = [];
-      for (const [index, ref] of outputs.entries()) {
-        const url =
-          `${BASE_URL}/view?filename=${encodeURIComponent(ref.filename)}` +
-          `&subfolder=${encodeURIComponent(ref.subfolder ?? "")}&type=${encodeURIComponent(ref.type ?? "output")}`;
-        const res = await fetchWithTimeout(url, { timeoutMs: 60_000 }, ctx.signal);
-        if (!res.ok) throw new ProviderError(`Could not download ${ref.filename} (HTTP ${res.status}).`);
-        images.push({
-          bytes: new Uint8Array(await res.arrayBuffer()),
-          mimeType: res.headers.get("content-type") ?? "image/png",
-          // ComfyUI increments the seed per batch item.
-          seed: ctx.request.seed + index,
-          width: ctx.request.width,
-          height: ctx.request.height,
-        });
-      }
-
-      ctx.onProgress(1);
-      return { images, warnings };
-    } finally {
-      detachProgress();
+    const res = await fetchWithTimeout(
+      `${BASE_URL}/history/${encodeURIComponent(handle.promptId)}`,
+      { timeoutMs: 15_000 },
+      ctx.signal,
+    );
+    if (!res.ok) {
+      return { status: "failed", error: `ComfyUI history check failed (HTTP ${res.status}).` };
     }
+
+    const history = (await res.json()) as Record<string, HistoryEntry>;
+    const entry = history[handle.promptId];
+    // An empty history means it is still queued or running.
+    if (!entry) return { status: "pending", progress: 0.1 };
+
+    if (entry.status?.status_str === "error") {
+      return {
+        status: "failed",
+        error: `ComfyUI execution failed: ${JSON.stringify(entry.status.messages ?? []).slice(0, 500)}`,
+      };
+    }
+
+    const outputs = Object.values(entry.outputs ?? {}).flatMap((output) => output.images ?? []);
+    if (outputs.length === 0) {
+      return entry.status?.completed
+        ? { status: "failed", error: "ComfyUI finished without producing images." }
+        : { status: "pending", progress: 0.5 };
+    }
+
+    // ComfyUI serves outputs from its own host, which the browser generally
+    // cannot reach, so the bytes are pulled through and stored by the caller.
+    const images: GeneratedImage[] = [];
+    for (const [index, ref] of outputs.entries()) {
+      const url =
+        `${BASE_URL}/view?filename=${encodeURIComponent(ref.filename)}` +
+        `&subfolder=${encodeURIComponent(ref.subfolder ?? "")}&type=${encodeURIComponent(ref.type ?? "output")}`;
+      const image = await fetchWithTimeout(url, { timeoutMs: 60_000 }, ctx.signal);
+      if (!image.ok) {
+        return { status: "failed", error: `Could not download ${ref.filename} (HTTP ${image.status}).` };
+      }
+      images.push({
+        source: {
+          kind: "bytes",
+          bytes: new Uint8Array(await image.arrayBuffer()),
+          mimeType: image.headers.get("content-type")?.split(";")[0] ?? "image/png",
+        },
+        // ComfyUI increments the seed per batch item.
+        seed: handle.seed + index,
+        width: handle.width,
+        height: handle.height,
+      });
+    }
+
+    return { status: "done", images };
   },
 };

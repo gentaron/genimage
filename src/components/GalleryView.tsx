@@ -1,38 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Image from "next/image";
+import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { IconGrid, IconSparkles, IconSpinner } from "@/components/ui/icons";
+import { IconGrid, IconSparkles } from "@/components/ui/icons";
 import { Lightbox } from "@/components/studio/Lightbox";
+import { ResultImage } from "@/components/studio/ResultImage";
+import {
+  getHistorySnapshot,
+  getServerHistorySnapshot,
+  subscribeHistory,
+} from "@/components/studio/history-store";
 import type { ImageRecord, Job } from "@/lib/types";
 
 const PAGE_SIZE = 24;
 
 export function GalleryView() {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  // History lives in this browser — the server keeps no job table.
+  const jobs = useSyncExternalStore(
+    subscribeHistory,
+    getHistorySnapshot,
+    getServerHistorySnapshot,
+  );
+  const [shown, setShown] = useState(PAGE_SIZE);
   const [viewing, setViewing] = useState<{ job: Job; image: ImageRecord } | null>(null);
 
-  // Starts with the request, so the mount effect never sets state synchronously.
-  const loadPage = useCallback(async (offset: number) => {
-    try {
-      const res = await fetch(`/api/jobs?limit=${PAGE_SIZE}&offset=${offset}`);
-      if (!res.ok) return;
-      const json = (await res.json()) as { jobs: Job[]; total: number };
-      setJobs((prev) => (offset === 0 ? json.jobs : [...prev, ...json.jobs]));
-      setTotal(json.total);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadPage(0);
-  }, [loadPage]);
-
-  const tiles = jobs.flatMap((job) => job.images.map((image) => ({ job, image })));
+  const allTiles = jobs.flatMap((job) => job.images.map((image) => ({ job, image })));
+  const tiles = allTiles.slice(0, shown);
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">
@@ -42,8 +35,8 @@ export function GalleryView() {
           Gallery
         </h1>
         <span className="text-[12.5px]" style={{ color: "var(--text-faint)" }}>
-          {tiles.length} image{tiles.length === 1 ? "" : "s"} from {total} run
-          {total === 1 ? "" : "s"}
+          {allTiles.length} image{allTiles.length === 1 ? "" : "s"} from {jobs.length} run
+          {jobs.length === 1 ? "" : "s"} in this browser
         </span>
         <Link href="/" className="btn btn-ghost ml-auto px-3 py-2">
           <IconSparkles size={15} />
@@ -51,57 +44,49 @@ export function GalleryView() {
         </Link>
       </header>
 
-      {tiles.length === 0 && !loading ? (
+      {tiles.length === 0 ? (
         <div
           className="rounded-xl px-6 py-20 text-center"
           style={{ border: "1px dashed var(--border)" }}
         >
           <p className="text-[14px] font-medium">The gallery is empty</p>
           <p className="mt-1 text-[12.5px]" style={{ color: "var(--text-muted)" }}>
-            Everything you render shows up here, with the parameters that produced it.
+            Everything you render shows up here, with the parameters that produced it. History is
+            stored in this browser, so it does not follow you to another device.
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
           {tiles.map(({ job, image }) => (
-            <button
+            <div
               key={image.id}
-              type="button"
-              onClick={() => setViewing({ job, image })}
               className="group relative overflow-hidden rounded-lg"
               style={{ aspectRatio: `${image.width} / ${image.height}`, background: "var(--sunken)" }}
             >
-              <Image
-                src={`/api/images/${image.id}`}
+              <ResultImage
+                image={image}
                 alt={job.request.prompt.slice(0, 80)}
-                fill
-                unoptimized
-                sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 16vw"
-                className="object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                className="h-full w-full cursor-pointer object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                onClick={() => setViewing({ job, image })}
               />
               <span
-                className="absolute inset-x-0 bottom-0 line-clamp-2 px-2 py-1.5 text-left text-[10.5px] opacity-0 transition-opacity group-hover:opacity-100"
+                className="pointer-events-none absolute inset-x-0 bottom-0 line-clamp-2 px-2 py-1.5 text-left text-[10.5px] opacity-0 transition-opacity group-hover:opacity-100"
                 style={{ background: "linear-gradient(transparent, rgba(0,0,0,0.8))", color: "#fff" }}
               >
                 {job.request.prompt}
               </span>
-            </button>
+            </div>
           ))}
         </div>
       )}
 
-      {jobs.length < total && (
+      {tiles.length < allTiles.length && (
         <div className="mt-6 flex justify-center">
           <button
             type="button"
-            onClick={() => {
-              setLoading(true);
-              void loadPage(jobs.length);
-            }}
-            disabled={loading}
+            onClick={() => setShown((n) => n + PAGE_SIZE)}
             className="btn btn-subtle px-4 py-2.5"
           >
-            {loading && <IconSpinner size={14} />}
             Load more
           </button>
         </div>

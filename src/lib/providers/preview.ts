@@ -4,7 +4,7 @@ import {
   type GeneratedImage,
   type ImageProvider,
   type ProviderContext,
-  type ProviderResult,
+  type StartResult,
 } from "./types";
 
 /**
@@ -205,7 +205,7 @@ export const previewProvider: ImageProvider = {
     return { available: true, detail: "always available" };
   },
 
-  async generate(ctx: ProviderContext): Promise<ProviderResult> {
+  async start(ctx: ProviderContext): Promise<StartResult> {
     const { request: r } = ctx;
     const palette = [
       ctx.checkpoint.thumb[0],
@@ -222,13 +222,18 @@ export const previewProvider: ImageProvider = {
       if (ctx.signal.aborted) throw new ProviderError("Cancelled.");
       const seed = r.seed + i;
       const pixels = render(width, height, (seed ^ promptHash) >>> 0, palette);
-      images.push({ bytes: encodePng(width, height, pixels), mimeType: "image/png", seed, width, height });
-      ctx.onProgress((i + 1) / r.batchSize);
+      images.push({
+        source: { kind: "bytes", bytes: encodePng(width, height, pixels), mimeType: "image/png" },
+        seed,
+        width,
+        height,
+      });
       // Yield so a batch does not block the event loop for the whole request.
       await new Promise((resolve) => setImmediate(resolve));
     }
 
     return {
+      status: "done",
       images,
       warnings: [
         "Rendered by the offline preview provider — this is procedural placeholder art, not a diffusion model. " +

@@ -12,15 +12,14 @@ import {
 import { buildPrompts, estimateCost } from "./prompt";
 import { checkPrompt, checkSfw } from "./safety";
 import { getProvider, resolveProvider } from "./providers";
-import type { ProviderContext, ResolvedLora } from "./providers/types";
+import type { GeneratedImage, ProviderContext, ResolvedLora } from "./providers/types";
 import { ProviderError } from "./providers/types";
-import { previewProvider } from "./providers/preview";
-import { getJob, newId, putJob, readUpload, saveOutput } from "./store";
-import type { GenerationRequest, Job, ResolvedRequest } from "./types";
+import { newId, readUpload, saveOutput } from "./images";
+import { signHandle, verifyHandle } from "./handle";
+import type { GenerationRequest, ImageRecord, Job, ResolvedRequest } from "./types";
 
 const MAX_LORAS = Number(process.env.GENIMAGE_MAX_LORAS ?? 6);
 const MAX_BATCH = Number(process.env.GENIMAGE_MAX_BATCH ?? 8);
-const CONCURRENCY = Math.max(1, Number(process.env.GENIMAGE_CONCURRENCY ?? 1));
 const SFW_ONLY = process.env.GENIMAGE_SFW_ONLY === "1";
 
 export class RequestError extends Error {}
@@ -177,46 +176,98 @@ export function resolveRequest(input: Partial<GenerationRequest>): {
 }
 
 /* ------------------------------------------------------------------ */
-/* Queue                                                               */
+/* Running a job                                                       */
 /* ------------------------------------------------------------------ */
 
-interface Engine {
-  queue: string[];
-  running: Set<string>;
-  controllers: Map<string, AbortController>;
+/**
+ * Persists whatever a provider returned.
+ *
+ * URL-backed images are recorded as-is — the browser fetches them from the
+ * provider's CDN, so nothing passes through here. Byte-backed images go to blob
+ * storage and are served from `/api/images/<id>`.
+ */
+async function recordImages(images: GeneratedImage[]): Promise<ImageRecord[]> {
+  const records: ImageRecord[] = [];
+  for (const image of images) {
+    if (image.source.kind === "url") {
+      records.push({
+        id: newId("img"),
+        seed: image.seed,
+        width: image.width,
+        height: image.height,
+        url: image.source.url,
+        createdAt: Date.now(),
+      });
+    } else {
+      const id = await saveOutput(image.source.bytes, image.source.mimeType);
+      records.push({
+        id,
+        seed: image.seed,
+        width: image.width,
+        height: image.height,
+        url: null,
+        createdAt: Date.now(),
+      });
+    }
+  }
+  return records;
 }
 
-const globalEngine = globalThis as unknown as { __genimageEngine?: Engine };
-const engine: Engine =
-  globalEngine.__genimageEngine ??
-  (globalEngine.__genimageEngine = { queue: [], running: new Set(), controllers: new Map() });
+async function buildContext(
+  request: ResolvedRequest,
+  signal: AbortSignal,
+  withReference: boolean,
+): Promise<ProviderContext> {
+  const checkpoint = getCheckpoint(request.checkpointId) ?? CHECKPOINTS[0];
+  const loras: ResolvedLora[] = request.loras
+    .map((selection) => {
+      const lora = getLora(selection.id);
+      return lora
+        ? { lora, strength: selection.strength, clipStrength: selection.clipStrength ?? selection.strength }
+        : null;
+    })
+    .filter((entry): entry is ResolvedLora => entry !== null);
 
-export async function submit(input: Partial<GenerationRequest>): Promise<Job> {
+  const referenceImage =
+    withReference && request.referenceImageId ? await readUpload(request.referenceImageId) : null;
+
+  return { request, checkpoint, loras, referenceImage, signal };
+}
+
+/**
+ * Validates a request and kicks off the render.
+ *
+ * Returns as soon as the provider has accepted the work. Providers that finish
+ * inline (Pollinations, the offline renderer) come back `succeeded`; the rest
+ * come back `running` with a signed handle for the browser to poll.
+ */
+export async function submit(input: Partial<GenerationRequest>, signal: AbortSignal): Promise<Job> {
   const { request, loras, warnings } = resolveRequest(input);
   const provider = await resolveProvider(request.provider === "auto" ? null : request.provider);
 
-  const pixels = request.width * request.height;
-  if (pixels > provider.capabilities.maxPixels) {
+  if (request.width * request.height > provider.capabilities.maxPixels) {
     warnings.push(
       `${provider.label} caps output around ${Math.round(provider.capabilities.maxPixels / 1_000_000)} MP; ` +
-        "the image was scaled to fit.",
+        "the image may be scaled to fit.",
     );
   }
   if (request.batchSize > 1 && !provider.capabilities.batch) {
     warnings.push(`${provider.label} renders one image at a time.`);
   }
 
+  const now = Date.now();
   const job: Job = {
     id: newId("job"),
-    status: "queued",
+    status: "running",
     mode: request.mode,
     provider: provider.id,
     request,
+    handle: null,
     images: [],
     error: null,
-    progress: 0,
-    queuedAt: Date.now(),
-    startedAt: null,
+    progress: 0.02,
+    queuedAt: now,
+    startedAt: now,
     finishedAt: null,
     cost: estimateCost({
       width: request.width,
@@ -230,124 +281,110 @@ export async function submit(input: Partial<GenerationRequest>): Promise<Job> {
     warnings,
   };
 
-  await putJob(job);
+  try {
+    const ctx = await buildContext(request, signal, true);
+    if (request.referenceImageId && !ctx.referenceImage) {
+      job.warnings.push("The reference image is no longer in storage; it was ignored.");
+    }
 
-  // High priority jumps ahead of the normal queue but never preempts a run.
-  if (request.highPriority) {
-    const firstNormal = engine.queue.findIndex((id) => !id.startsWith("!"));
-    engine.queue.splice(firstNormal === -1 ? engine.queue.length : firstNormal, 0, job.id);
-  } else {
-    engine.queue.push(job.id);
+    const result = await provider.start(ctx);
+    job.warnings.push(...result.warnings);
+
+    if (result.status === "done") {
+      job.images = await recordImages(result.images);
+      job.status = "succeeded";
+      job.progress = 1;
+      job.finishedAt = Date.now();
+    } else {
+      if (!provider.poll) {
+        throw new ProviderError(`${provider.label} returned a pending job but cannot poll it.`);
+      }
+      job.handle = signHandle(provider.id, result.handle);
+      job.progress = 0.05;
+    }
+  } catch (error) {
+    job.status = "failed";
+    job.error = describe(error, provider.label);
+    job.finishedAt = Date.now();
   }
 
-  void pump();
   return job;
 }
 
-/** Starts workers up to the concurrency limit. Safe to call repeatedly. */
-function pump(): void {
-  while (engine.running.size < CONCURRENCY && engine.queue.length > 0) {
-    const jobId = engine.queue.shift();
-    if (!jobId) break;
-    engine.running.add(jobId);
-    void run(jobId).finally(() => {
-      engine.running.delete(jobId);
-      if (engine.queue.length > 0) pump();
-    });
+/** Advances a running job. The handle's signature is what authorises the poll. */
+export async function advance(job: Job, signal: AbortSignal): Promise<Job> {
+  if (job.status !== "running" && job.status !== "queued") return job;
+
+  const provider = getProvider(job.provider);
+  if (!provider?.poll) {
+    return { ...job, status: "failed", error: "That backend is no longer available.", finishedAt: Date.now() };
   }
-}
 
-/** Each job carries its own provider id, resolved when it was submitted. */
-async function run(jobId: string): Promise<void> {
-  const job = await getJob(jobId);
-  if (!job || job.status === "cancelled") return;
-
-  const provider = getProvider(job.provider) ?? previewProvider;
-
-  const checkpoint = getCheckpoint(job.request.checkpointId) ?? CHECKPOINTS[0];
-  const loras: ResolvedLora[] = job.request.loras
-    .map((l) => {
-      const lora = getLora(l.id);
-      return lora ? { lora, strength: l.strength, clipStrength: l.clipStrength ?? l.strength } : null;
-    })
-    .filter((l): l is ResolvedLora => l !== null);
-
-  const controller = new AbortController();
-  engine.controllers.set(jobId, controller);
-
-  job.status = "running";
-  job.startedAt = Date.now();
-  job.progress = 0.02;
-  await putJob(job);
+  const handle = job.handle ? verifyHandle(job.provider, job.handle) : null;
+  if (handle === null) {
+    return {
+      ...job,
+      status: "failed",
+      error: "This job's handle is missing or was not issued by this server.",
+      finishedAt: Date.now(),
+    };
+  }
 
   try {
-    const referenceImage = job.request.referenceImageId
-      ? await readUpload(job.request.referenceImageId)
-      : null;
-    if (job.request.referenceImageId && !referenceImage) {
-      job.warnings.push("The reference image is no longer on disk; it was ignored.");
+    // resolveRequest already validated everything on the way in, and the handle
+    // signature covers the provider, so the request is only used to shape output.
+    const ctx = await buildContext(job.request, signal, false);
+    const result = await provider.poll(handle, ctx);
+
+    if (result.status === "pending") {
+      return {
+        ...job,
+        progress: Math.max(job.progress, result.progress ?? job.progress),
+        warnings: result.warnings ? [...job.warnings, ...result.warnings] : job.warnings,
+      };
+    }
+    if (result.status === "failed") {
+      return { ...job, status: "failed", error: result.error, finishedAt: Date.now() };
     }
 
-    const ctx: ProviderContext = {
-      request: job.request,
-      checkpoint,
-      loras,
-      referenceImage,
-      signal: controller.signal,
-      onProgress: (progress) => {
-        job.progress = Math.max(job.progress, Math.min(0.99, progress));
-        void putJob(job);
-      },
+    return {
+      ...job,
+      status: "succeeded",
+      progress: 1,
+      images: await recordImages(result.images),
+      warnings: result.warnings ? [...job.warnings, ...result.warnings] : job.warnings,
+      finishedAt: Date.now(),
     };
-
-    const result = await provider.generate(ctx);
-
-    for (const image of result.images) {
-      const saved = await saveOutput(job.id, image.bytes, image.mimeType);
-      job.images.push({
-        id: saved.id,
-        jobId: job.id,
-        seed: image.seed,
-        width: image.width,
-        height: image.height,
-        file: saved.file,
-        mimeType: image.mimeType,
-        createdAt: Date.now(),
-      });
-    }
-
-    job.warnings.push(...result.warnings);
-    job.status = "succeeded";
-    job.progress = 1;
   } catch (error) {
-    const message =
-      error instanceof ProviderError
-        ? error.message
-        : `${provider.label} failed: ${(error as Error).message ?? String(error)}`;
-    job.status = controller.signal.aborted ? "cancelled" : "failed";
-    job.error = message;
-  } finally {
-    job.finishedAt = Date.now();
-    engine.controllers.delete(jobId);
-    await putJob(job);
+    return { ...job, status: "failed", error: describe(error, provider.label), finishedAt: Date.now() };
   }
 }
 
-export async function cancel(jobId: string): Promise<boolean> {
-  const index = engine.queue.indexOf(jobId);
-  if (index !== -1) engine.queue.splice(index, 1);
-
-  const controller = engine.controllers.get(jobId);
-  controller?.abort(new Error("Cancelled by the user."));
-
-  const job = await getJob(jobId);
-  if (!job || job.status === "succeeded" || job.status === "failed") return false;
-  job.status = "cancelled";
-  job.finishedAt = Date.now();
-  await putJob(job);
-  return true;
+function describe(error: unknown, providerLabel: string): string {
+  if (error instanceof ProviderError) return error.message;
+  const message = (error as Error)?.message ?? String(error);
+  // The classic serverless failure, worth naming precisely.
+  if (message.includes("ENOENT") || message.includes("EROFS") || message.includes("read-only")) {
+    return (
+      `${providerLabel} produced images but they could not be stored: ${message}. ` +
+      "On a serverless host set up blob storage, or use a backend that returns image URLs."
+    );
+  }
+  return `${providerLabel} failed: ${message}`;
 }
 
-export function queueDepth(): number {
-  return engine.queue.length + engine.running.size;
+/**
+ * Cancels a pending job upstream. Best-effort — the browser stops polling
+ * either way, but on a per-second backend this is what stops the billing.
+ */
+export async function abandon(job: Job, signal: AbortSignal): Promise<void> {
+  const provider = getProvider(job.provider);
+  if (!provider?.cancel || !job.handle) return;
+
+  const handle = verifyHandle(job.provider, job.handle);
+  if (handle === null) return;
+
+  await provider.cancel(handle, signal).catch((error) => {
+    console.error(`[cancel] ${provider.label} refused:`, error);
+  });
 }

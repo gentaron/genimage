@@ -1,6 +1,6 @@
 import type { AspectRatio, Checkpoint, Lora, ResolutionTier } from "@/lib/catalog";
 import type { Booster } from "@/lib/prompt";
-import type { Job, Mode, ProviderStatus } from "@/lib/types";
+import type { ImageRecord, Job, Mode, ProviderStatus } from "@/lib/types";
 
 export interface Catalog {
   checkpoints: Checkpoint[];
@@ -80,6 +80,9 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 const STORAGE_KEY = "genimage:settings:v1";
+const HISTORY_KEY = "genimage:history:v1";
+/** Records are small JSON; image bytes never live in localStorage. */
+const HISTORY_LIMIT = 60;
 
 export function loadSettings(): Settings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
@@ -129,4 +132,57 @@ export function settingsFromJob(job: Job, current: Settings): Settings {
     clipSkip: job.request.clipSkip,
     appendQualityTags: job.request.appendQualityTags,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Job history                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * History lives in the browser.
+ *
+ * The server keeps no job table, which is what lets the whole studio run on a
+ * serverless host with no database: a job record is small, and the images it
+ * points at are either on the provider's CDN or in blob storage.
+ */
+export function loadHistory(): Job[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Job[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((job) =>
+      // A job left running when the tab closed can never be resumed.
+      job.status === "running" || job.status === "queued"
+        ? { ...job, status: "failed" as const, error: "Interrupted — the tab was closed while it ran." }
+        : job,
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function saveHistory(jobs: Job[]): void {
+  if (typeof window === "undefined") return;
+  const trimmed = jobs.slice(0, HISTORY_LIMIT);
+  try {
+    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+  } catch {
+    // Over quota: drop the oldest half rather than losing the lot.
+    try {
+      window.localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed.slice(0, HISTORY_LIMIT / 2)));
+    } catch {
+      /* storage is unavailable; history is in-memory only for this session */
+    }
+  }
+}
+
+/** `/api/images/<id>` for bytes we stored, or the provider's own URL. */
+export function imageSrc(image: ImageRecord): string {
+  return image.url ?? `/api/images/${image.id}`;
+}
+
+export function isExternal(image: ImageRecord): boolean {
+  return Boolean(image.url);
 }

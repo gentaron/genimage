@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import Image from "next/image";
 import { IconClose, IconDownload, IconRefresh } from "@/components/ui/icons";
 import type { ImageRecord, Job } from "@/lib/types";
+import { imageSrc, isExternal } from "./state";
 
 const CHROME_BUTTON: React.CSSProperties = {
   background: "rgba(255,255,255,0.08)",
@@ -70,13 +70,18 @@ export function Lightbox({
             </button>
           )}
           <a
-            href={`/api/images/${image.id}?download`}
-            download
+            href={imageSrc(image) + (isExternal(image) ? "" : "?download")}
+            {...(isExternal(image) ? { target: "_blank", rel: "noreferrer" } : { download: true })}
             className="btn px-3 py-2"
             style={CHROME_BUTTON}
+            title={
+              isExternal(image)
+                ? "Hosted by the backend — opens in a new tab so you can save it"
+                : "Download"
+            }
           >
             <IconDownload size={14} />
-            Download
+            {isExternal(image) ? "Open full size" : "Download"}
           </a>
           <button type="button" onClick={onClose} aria-label="Close" className="btn p-2" style={CHROME_BUTTON}>
             <IconClose size={16} />
@@ -86,12 +91,11 @@ export function Lightbox({
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-4 pb-4 lg:flex-row">
         <div className="flex min-h-0 flex-1 items-center justify-center" onClick={onClose}>
-          <Image
-            src={`/api/images/${image.id}`}
+          {/* Provider CDNs are never optimised through next/image. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imageSrc(image)}
             alt={job.request.prompt.slice(0, 120)}
-            width={image.width}
-            height={image.height}
-            unoptimized
             className="max-h-full w-auto max-w-full rounded-lg object-contain"
             onClick={(e) => e.stopPropagation()}
           />

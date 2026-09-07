@@ -1,0 +1,31 @@
+# Netlify deployment.
+#
+# The studio is built to survive this environment: the filesystem is read-only
+# apart from /tmp, functions are short-lived, and nothing persists in memory
+# between invocations. So generated images go to Netlify Blobs, job history
+# lives in the browser, and every backend either finishes inside one request or
+# is polled through its own queue API.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Blob storage needs no configuration on Netlify — the runtime supplies the
+# credentials. Everything below is optional and set in the Netlify UI under
+# Site configuration → Environment variables:
+#
+#   FAL_KEY                 hosted GPU that loads your LoRA weights (paid)
+#   REPLICATE_API_TOKEN     the same, via Replicate (paid)
+#   GENIMAGE_WEIGHTS        {"shexyo-v3":"https://…/shexyo_v3.safetensors", …}
+#   HF_TOKEN                Hugging Face inference (small free credit)
+#   GENIMAGE_SFW_ONLY       "1" on a shared instance
+#   GENIMAGE_SECRET         any random string; signs the provider handles
+#
+# With none of them set the site still works: Pollinations serves free, keyless
+# images and the offline renderer is always available.

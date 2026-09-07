@@ -42,6 +42,11 @@ export interface Checkpoint {
   file: string;
   /** Fallback repo for the Hugging Face provider. */
   huggingFaceId?: string;
+  /**
+   * Public URL of the weights. Cloud backends load models over HTTP rather than
+   * from a local disk, so they need this. Empty by default — see `weightsFor`.
+   */
+  weightsUrl?: string;
   homepage?: string;
   clipSkip: number;
   defaults: SamplerDefaults;
@@ -72,6 +77,8 @@ export interface Lora {
   triggerWords: string[];
   /** Base models this LoRA was trained against — used for the mismatch warning. */
   compatibleWith: BaseModel[];
+  /** Public URL of the `.safetensors` file, for cloud backends. */
+  weightsUrl?: string;
   accelerator?: AcceleratorProfile;
   free: boolean;
   homepage?: string;
@@ -277,3 +284,38 @@ export function dimensionsFor(ratioId: string, tier: ResolutionTier): [number, n
 }
 
 export const DEFAULT_CHECKPOINT_ID = CHECKPOINTS[0].id;
+
+/* ------------------------------------------------------------------ */
+/* Weight URLs for cloud backends                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cloud backends cannot see a local `models/` folder — they fetch weights over
+ * HTTP. The catalog ships no URLs because these checkpoints and LoRAs are
+ * distributed under licences that make rehosting the operator's decision, so
+ * point `GENIMAGE_WEIGHTS` at your own copies:
+ *
+ *   GENIMAGE_WEIGHTS='{"shexyo-v3":"https://example.com/shexyo_v3.safetensors"}'
+ *
+ * Keys are catalog ids. Values are direct download URLs, or for checkpoints a
+ * Hugging Face repo id.
+ */
+function weightsOverrides(): Record<string, string> {
+  const raw = process.env.GENIMAGE_WEIGHTS;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([, value]) => typeof value === "string" && value)
+        .map(([key, value]) => [key, String(value)]),
+    );
+  } catch {
+    console.error("[catalog] GENIMAGE_WEIGHTS is not valid JSON; ignoring it.");
+    return {};
+  }
+}
+
+export function weightsFor(entry: { id: string; weightsUrl?: string }): string | null {
+  return weightsOverrides()[entry.id] ?? entry.weightsUrl ?? null;
+}

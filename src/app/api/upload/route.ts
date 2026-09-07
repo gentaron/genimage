@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveUpload } from "@/lib/store";
+import { saveUpload } from "@/lib/images";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +31,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "That file is not a PNG, JPEG or WebP image." }, { status: 415 });
   }
 
-  const saved = await saveUpload(bytes, file.type);
-  return NextResponse.json({ id: saved.id, size: bytes.length, mimeType: file.type });
+  try {
+    const id = await saveUpload(bytes, file.type);
+    return NextResponse.json({ id, size: bytes.length, mimeType: file.type });
+  } catch (error) {
+    console.error("[upload]", error);
+    return NextResponse.json(
+      { error: `Could not store the reference image: ${(error as Error).message}` },
+      { status: 500 },
+    );
+  }
 }

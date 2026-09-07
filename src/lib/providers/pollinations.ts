@@ -1,15 +1,18 @@
 import {
   fetchWithTimeout,
-  ProviderError,
   type GeneratedImage,
   type ImageProvider,
   type ProviderContext,
-  type ProviderResult,
+  type StartResult,
 } from "./types";
 
 /**
- * Pollinations — free, keyless text-to-image. The zero-setup default so the
- * studio produces real images before anyone installs a GPU stack.
+ * Pollinations — free, keyless text-to-image.
+ *
+ * The generation *is* the URL: the browser requests the image and the render
+ * happens on their side. Nothing is fetched, stored or proxied here, which is
+ * why this backend works unchanged on a serverless host with a read-only
+ * filesystem and a ten-second request budget.
  *
  * It runs its own hosted models, so the checkpoint and LoRA selection cannot be
  * honoured; trigger words still reach the prompt and we say so in a warning.
@@ -60,16 +63,16 @@ export const pollinationsProvider: ImageProvider = {
     }
   },
 
-  async generate(ctx: ProviderContext): Promise<ProviderResult> {
+  async start(ctx: ProviderContext): Promise<StartResult> {
     const { request: r } = ctx;
     const warnings: string[] = [
       `Pollinations runs its own hosted model, so "${ctx.checkpoint.name}" was not used.`,
     ];
     if (ctx.loras.length > 0) {
+      const triggers = ctx.loras.flatMap((l) => l.lora.triggerWords).join(", ");
       warnings.push(
-        `LoRA weights are not applied here — only the trigger words (${ctx.loras
-          .flatMap((l) => l.lora.triggerWords)
-          .join(", ") || "none"}) reached the prompt. Use ComfyUI for the real stack.`,
+        `LoRA weights are not applied here — only the trigger words (${triggers || "none"}) reached ` +
+          "the prompt. Use fal.ai, Replicate or ComfyUI for the real stack.",
       );
     }
     if (r.mode !== "generate") warnings.push(`${r.mode} mode is not supported by this provider.`);
@@ -79,8 +82,6 @@ export const pollinationsProvider: ImageProvider = {
 
     const images: GeneratedImage[] = [];
     for (let i = 0; i < r.batchSize; i++) {
-      if (ctx.signal.aborted) throw new ProviderError("Cancelled.");
-
       const params = new URLSearchParams({
         width: String(width),
         height: String(height),
@@ -91,39 +92,18 @@ export const pollinationsProvider: ImageProvider = {
         referrer: "genimage-studio",
       });
       if (r.finalNegativePrompt) params.set("negative", r.finalNegativePrompt);
-
-      const url = `${BASE_URL}/prompt/${encodeURIComponent(r.finalPrompt)}?${params}`;
-      const res = await fetchWithTimeout(
-        url,
-        {
-          timeoutMs: 120_000,
-          headers: TOKEN ? { authorization: `Bearer ${TOKEN}` } : undefined,
-        },
-        ctx.signal,
-      );
-
-      if (!res.ok) {
-        throw new ProviderError(
-          `Pollinations returned HTTP ${res.status}. The free tier rate-limits bursts — try again in a moment.`,
-          res.status === 429 || res.status >= 500,
-        );
-      }
-
-      const contentType = res.headers.get("content-type") ?? "";
-      if (!contentType.startsWith("image/")) {
-        throw new ProviderError(`Pollinations returned ${contentType || "an unknown type"} instead of an image.`);
-      }
+      // A token raises the rate limit. It is only ever placed on a URL when the
+      // operator opted in, since the browser will see it.
+      if (TOKEN && process.env.POLLINATIONS_TOKEN_IN_URL === "1") params.set("token", TOKEN);
 
       images.push({
-        bytes: new Uint8Array(await res.arrayBuffer()),
-        mimeType: contentType.split(";")[0],
+        source: { kind: "url", url: `${BASE_URL}/prompt/${encodeURIComponent(r.finalPrompt)}?${params}` },
         seed: r.seed + i,
         width,
         height,
       });
-      ctx.onProgress((i + 1) / r.batchSize);
     }
 
-    return { images, warnings };
+    return { status: "done", images, warnings };
   },
 };
