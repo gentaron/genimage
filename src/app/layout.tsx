@@ -2,45 +2,30 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GenImage Studio",
-  description:
-    "A self-hostable AI image generation studio for Illustrious / NoobAI-XL checkpoints and LoRA stacks.",
-  applicationName: "GenImage Studio",
+  title: "Eureka Thumb",
+  description: "文章を貼るだけで、文字だけの派手なブログサムネ(1280×670)を作るツール。",
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0a0a0f" },
-    { media: "(prefers-color-scheme: light)", color: "#f7f7fb" },
-  ],
+  themeColor: "#0b0d14",
   width: "device-width",
   initialScale: 1,
 };
 
-/**
- * Applies the stored theme before first paint. Without this the page flashes
- * the default palette on every navigation.
- */
-const THEME_SCRIPT = `
-(function () {
-  try {
-    var stored = localStorage.getItem("genimage:theme");
-    var theme = stored || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-    document.documentElement.setAttribute("data-theme", theme);
-  } catch (e) {
-    document.documentElement.setAttribute("data-theme", "dark");
-  }
-})();
-`;
+// The canvas draws with these families, so they are loaded as plain
+// stylesheets the browser can pull glyph subsets from on demand.
+const FONTS =
+  "https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Yomogi&display=swap";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body>
-        {/* Runs before the first paint; Next owns <head>, so it lives here. */}
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-        {children}
-      </body>
+    <html lang="ja">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link rel="stylesheet" href={FONTS} />
+      </head>
+      <body>{children}</body>
     </html>
   );
 }
