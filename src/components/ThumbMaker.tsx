@@ -5,7 +5,17 @@ import { LIMITS, sanitizeCopy, type ThumbCopy } from "@/lib/copy";
 import { extractLocal, keywords, reaction } from "@/lib/extract";
 import { H, THEMES, W, loadFonts, renderThumbnail, type ThemeId } from "@/lib/render";
 
-type Source = "claude" | "local" | null;
+type AiId = "claude" | "gemini" | "pollinations";
+type Choice = "auto" | AiId | "local";
+type Source = AiId | "local" | null;
+
+// Kept here rather than imported from lib/ai, which would drag the server SDK into the bundle.
+const LABEL: Record<AiId | "local", string> = {
+  claude: "Claude",
+  gemini: "Gemini(無料枠)",
+  pollinations: "Pollinations(無料)",
+  local: "AIなし",
+};
 
 const EMPTY: ThumbCopy = { main: "", sub: "", tags: [], comment: "" };
 
@@ -32,6 +42,15 @@ export default function ThumbMaker() {
   const [busy, setBusy] = useState(false);
   const [source, setSource] = useState<Source>(null);
   const [note, setNote] = useState("");
+  const [choice, setChoice] = useState<Choice>("auto");
+  const [providers, setProviders] = useState<AiId[]>([]);
+
+  useEffect(() => {
+    fetch("/api/analyze")
+      .then((r) => r.json())
+      .then((d: { providers?: AiId[] }) => setProviders(d.providers ?? []))
+      .catch(() => setProviders([]));
+  }, []);
 
   // Redraw whenever the words or the look change.
   useEffect(() => {
@@ -59,24 +78,27 @@ export default function ThumbMaker() {
     setNote("");
     const nextSeed = Math.floor(Math.random() * 1e9);
     setSeed(nextSeed);
-    try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: input }),
-      });
-      const data = (await res.json()) as { copy?: ThumbCopy; error?: string };
-      if (res.ok && data.copy) {
-        apply(data.copy);
-        setSource("claude");
-        return;
+    if (choice !== "local") {
+      try {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: input, provider: choice === "auto" ? undefined : choice }),
+        });
+        const data = (await res.json()) as { copy?: ThumbCopy; source?: AiId; skipped?: string[]; error?: string };
+        if (res.ok && data.copy && data.source) {
+          apply(data.copy);
+          setSource(data.source);
+          if (data.skipped?.length) setNote(`先に試してダメだったもの: ${data.skipped.join(" / ")}`);
+          setBusy(false);
+          return;
+        }
+        setNote(`AIで作れませんでした(${data.error ?? res.status})。AIなしで作りました。`);
+      } catch {
+        setNote("AIに接続できませんでした。AIなしで作りました。");
       }
-      setNote(data.error ? `AI抽出は使えませんでした(${data.error})。オフライン抽出で作りました。` : "");
-    } catch {
-      setNote("AI抽出に接続できませんでした。オフライン抽出で作りました。");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
     apply(extractLocal(input, nextSeed));
     setSource("local");
   }
@@ -150,9 +172,25 @@ export default function ThumbMaker() {
                 </button>
               )}
             </div>
+            <label className="mt-3 flex items-center gap-2 text-xs text-[var(--muted)]">
+              文字を考えるAI
+              <select
+                className="field !w-auto flex-1 !py-1.5 text-sm"
+                value={choice}
+                onChange={(e) => setChoice(e.target.value as Choice)}
+              >
+                <option value="auto">自動(使えるものから順に)</option>
+                {providers.map((id) => (
+                  <option key={id} value={id}>
+                    {LABEL[id]}
+                  </option>
+                ))}
+                <option value="local">AIなし(キーワード抽出のみ)</option>
+              </select>
+            </label>
             {source && (
               <p className="mt-2 text-xs text-[var(--muted)]">
-                {source === "claude" ? "Claude で文字を抽出しました" : "オフライン抽出で作りました"}
+                {source === "local" ? "AIなしで文字を作りました" : `${LABEL[source]} が文字を書きました`}
               </p>
             )}
             {note && <p className="mt-1 text-xs text-amber-300">{note}</p>}

@@ -18,20 +18,25 @@ npm install
 npm run dev      # http://localhost:3000
 ```
 
-## 文字の抽出
+## 文字を考えるAI
 
-| 設定 | 動き |
-|---|---|
-| `ANTHROPIC_API_KEY` あり | Claude が文章を読み、見出し・キーワード・エウレカの主観コメントを書く |
-| なし(または失敗時) | ブラウザ内のオフライン抽出(頻度+位置でキーワード、一言はテンプレート) |
+生成ボタンを押すと、使えるAIを上から順に試して最初に答えたものを使う。画面の「文字を考えるAI」で固定もできる。
 
-モデルは `THUMB_MODEL` で変更可(既定 `claude-opus-5-5`)。拒否時は API のサーバー側フォールバックが働く。
+| AI | 料金 | 設定 |
+|---|---|---|
+| Claude | 有料 | `ANTHROPIC_API_KEY`(設定時は最優先) |
+| Gemini | **無料枠** | `GEMINI_API_KEY`(Google AI Studio で無料発行、カード不要) |
+| Pollinations | **無料・キー不要** | 何もしなくても使える |
+| AIなし | 無料 | 上が全部ダメなとき、ブラウザ内でキーワード抽出 |
+
+どのAIの出力も同じ文字数制限・メディア名除去を通る。
 
 ## 構成
 
 ```
 src/app/page.tsx               画面
-src/app/api/analyze/route.ts   Claude で文字を抽出
+src/app/api/analyze/route.ts   AIで文字を作るAPI
+src/lib/ai.ts                  Claude / Gemini / Pollinations の呼び出しと順番
 src/components/ThumbMaker.tsx  入力・編集・プレビュー・ダウンロード
 src/lib/render.ts              1280×670 キャンバス描画(配色テーマ・レイアウト)
 src/lib/extract.ts             オフライン抽出

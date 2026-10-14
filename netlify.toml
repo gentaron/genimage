@@ -8,5 +8,5 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Optional: set ANTHROPIC_API_KEY under Site configuration → Environment
-# variables to let Claude pick the words. Without it the site still works.
+# Optional: GEMINI_API_KEY (free tier) or ANTHROPIC_API_KEY under Site
+# configuration → Environment variables. With neither, free keyless Pollinations writes the words.
