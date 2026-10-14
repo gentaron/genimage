@@ -1,27 +1,25 @@
 /**
- * The AI copywriters, tried in order until one answers:
+ * The free AI copywriters, tried in order until one answers:
  *
- *   Claude       ANTHROPIC_API_KEY            paid
  *   Gemini       GEMINI_API_KEY               free tier (Google AI Studio key)
- *   Pollinations nothing, or POLLINATIONS_TOKEN  free, keyless
+ *   Pollinations nothing                        free, keyless
+ *
+ * Paid services are deliberately not supported.
  *
  * Every one returns the same ThumbCopy; the browser's offline extractor is
  * the last resort when all of them fail.
  */
-import Anthropic from "@anthropic-ai/sdk";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { LIMITS, sanitizeCopy, type ThumbCopy } from "./copy";
 
-export type ProviderId = "claude" | "gemini" | "pollinations";
+export type ProviderId = "gemini" | "pollinations";
 
 export const PROVIDER_LABEL: Record<ProviderId, string> = {
-  claude: "Claude",
   gemini: "Gemini(無料枠)",
   pollinations: "Pollinations(無料)",
 };
 
-export const Copy = z.object({
+const Copy = z.object({
   main: z.string().describe(`見出し。記事の名前かSEOキーワード。最大${LIMITS.main}文字。2行に分けたい位置があれば \\n を1つだけ入れる`),
   sub: z.string().describe(`補足の一言(数字・ベネフィット)。最大${LIMITS.sub}文字。不要なら空文字`),
   tags: z.array(z.string()).describe(`検索されやすい短いキーワード0〜3個。各${LIMITS.tag}文字以内。見出しと重複させない`),
@@ -59,21 +57,6 @@ function parseCopy(raw: string): ThumbCopy {
   return parsed.data;
 }
 
-async function claude(text: string): Promise<ThumbCopy> {
-  const client = new Anthropic();
-  const response = await client.beta.messages.parse({
-    model: process.env.THUMB_MODEL || "claude-opus-5-5",
-    max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    output_config: { effort: "low", format: betaZodOutputFormat(Copy) },
-    system: SYSTEM,
-    messages: [{ role: "user", content: userPrompt(text) }],
-  });
-  if (response.stop_reason === "refusal" || !response.parsed_output) throw new Error("no usable copy");
-  return response.parsed_output;
-}
-
 async function gemini(text: string): Promise<ThumbCopy> {
   const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
   const res = await fetch(
@@ -99,7 +82,6 @@ async function gemini(text: string): Promise<ThumbCopy> {
 
 async function pollinations(text: string): Promise<ThumbCopy> {
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (process.env.POLLINATIONS_TOKEN) headers.authorization = `Bearer ${process.env.POLLINATIONS_TOKEN}`;
   const res = await fetch(process.env.POLLINATIONS_URL || "https://text.pollinations.ai/openai", {
     method: "POST",
     headers,
@@ -128,11 +110,10 @@ async function pollinations(text: string): Promise<ThumbCopy> {
   return parseCopy(body);
 }
 
-const RUNNERS: Record<ProviderId, (text: string) => Promise<ThumbCopy>> = { claude, gemini, pollinations };
+const RUNNERS: Record<ProviderId, (text: string) => Promise<ThumbCopy>> = { gemini, pollinations };
 
 export function availableProviders(): ProviderId[] {
   const list: ProviderId[] = [];
-  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) list.push("claude");
   if (process.env.GEMINI_API_KEY) list.push("gemini");
   if (process.env.POLLINATIONS_DISABLED !== "1") list.push("pollinations");
   return list;
@@ -156,8 +137,7 @@ export async function writeCopy(text: string, prefer?: ProviderId): Promise<Writ
       if (!copy.main && !copy.comment) throw new Error("empty copy");
       return { copy, source: id, skipped };
     } catch (error) {
-      const reason =
-        error instanceof Anthropic.APIError ? `API ${error.status}` : error instanceof Error ? error.message : "error";
+      const reason = error instanceof Error ? error.message : "error";
       skipped.push(`${PROVIDER_LABEL[id]}: ${reason}`);
     }
   }

@@ -8,5 +8,5 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Optional: GEMINI_API_KEY (free tier) or ANTHROPIC_API_KEY under Site
-# configuration → Environment variables. With neither, free keyless Pollinations writes the words.
+# Optional: GEMINI_API_KEY (free tier) under Site
+# configuration → Environment variables. Without it, free keyless Pollinations writes the words.

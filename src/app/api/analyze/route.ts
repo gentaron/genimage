@@ -3,7 +3,7 @@ import { availableProviders, writeCopy, type ProviderId } from "@/lib/ai";
 export const maxDuration = 60;
 
 const MAX_INPUT = 40_000;
-const IDS: ProviderId[] = ["claude", "gemini", "pollinations"];
+const IDS: ProviderId[] = ["gemini", "pollinations"];
 
 /** Which AI copywriters this deployment can use. */
 export async function GET() {
