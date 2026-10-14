@@ -1,7 +1,7 @@
 /**
- * Offline copywriter. Used when no ANTHROPIC_API_KEY is configured or the API
- * call fails: pulls SEO keywords out of the text by frequency and position,
- * and gives Eureka a line from a set of first-person reactions.
+ * Offline copywriter. Used when no AI answers or the phone is offline: pulls
+ * SEO keywords out of the text by frequency and position, and gives Eureka a
+ * line from a set of first-person reactions.
  */
 import { LIMITS, sanitizeCopy, stripBanned, type ThumbCopy } from "./copy";
 

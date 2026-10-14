@@ -1,6 +1,6 @@
 /**
  * The words that end up on a thumbnail, and the clean-up every source of them
- * goes through — Claude's answer, the offline extractor and hand edits alike.
+ * goes through — the AI's answer, the offline extractor and hand edits alike.
  */
 
 export interface ThumbCopy {

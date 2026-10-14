@@ -1,6 +1,6 @@
 # Eureka Thumb — 文字だけサムネメーカー
 
-記事や紹介文を貼ってボタンを押すだけで、**キャラなし・文字だけ**の派手なブログサムネを
+スマホで、記事や紹介文を貼ってボタンを押すだけで、**キャラなし・文字だけ**の派手なブログサムネを
 **1280×670 PNG** で作るツール。
 
 - **見出し** … 紹介している物・名前・SEO キーワードを大きく(1〜2行に自動改行)
@@ -18,24 +18,39 @@ npm install
 npm run dev      # http://localhost:3000
 ```
 
-## 文字の抽出
+## 文字を考えるAI(無料のみ)
 
-| 設定 | 動き |
-|---|---|
-| `ANTHROPIC_API_KEY` あり | Claude が文章を読み、見出し・キーワード・エウレカの主観コメントを書く |
-| なし(または失敗時) | ブラウザ内のオフライン抽出(頻度+位置でキーワード、一言はテンプレート) |
+生成ボタンを押すと、無料のAIを上から順に試して最初に答えたものを使う。画面の「文字を考えるAI」で固定もできる。
+有料サービスへの接続は一切ない。
 
-モデルは `THUMB_MODEL` で変更可(既定 `claude-opus-5-5`)。拒否時は API のサーバー側フォールバックが働く。
+| AI | 料金 | 設定 |
+|---|---|---|
+| Gemini | 無料枠 | `GEMINI_API_KEY`(Google AI Studio で無料発行、カード不要) |
+| Pollinations | 無料・キー不要 | 何もしなくても使える |
+| AIなし | 無料 | 上が全部ダメなとき・オフライン時、アプリ内でキーワード抽出 |
+
+どのAIの出力も同じ文字数制限・メディア名除去を通る。
+
+## スマホ / アプリとして使う
+
+- スマホ前提の画面。プレビューは上に固定、「サムネ生成」「保存・共有」は画面下の大きなボタン
+- 「保存・共有」で共有シートが開く →「画像を保存」で写真に入る。プレビューの長押しでも保存できる
+- **PWA**:Android / PC の Chrome・Edge は右上の「アプリにする」から、iPhone は Safari の共有ボタン →「ホーム画面に追加」
+- 一度開けばオフラインでも動く(AIの代わりにアプリ内抽出、フォントもアプリに同梱)
 
 ## 構成
 
 ```
 src/app/page.tsx               画面
-src/app/api/analyze/route.ts   Claude で文字を抽出
+src/app/api/analyze/route.ts   AIで文字を作るAPI
+src/lib/ai.ts                  Gemini / Pollinations の呼び出しと順番
+src/app/manifest.ts            PWA マニフェスト
+public/sw.js                   サービスワーカー(オフライン対応)
+src/components/InstallButton.tsx  「アプリにする」ボタン
 src/components/ThumbMaker.tsx  入力・編集・プレビュー・ダウンロード
 src/lib/render.ts              1280×670 キャンバス描画(配色テーマ・レイアウト)
 src/lib/extract.ts             オフライン抽出
 src/lib/copy.ts                文字数制限と禁止語の除去
 ```
 
-フォント: Dela Gothic One(見出し)、Yomogi(手書きの一言) — Google Fonts。
+フォント: Dela Gothic One(見出し)、Yomogi(手書きの一言)。`next/font` でビルド時に取り込み、アプリから配信。

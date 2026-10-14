@@ -11,8 +11,18 @@ export const W = 1280;
 export const H = 670;
 export const SAFE = 76;
 
-export const FONT_HEAD = '"Dela Gothic One", "Hiragino Sans", "Noto Sans JP", sans-serif';
-export const FONT_HAND = '"Yomogi", "Klee One", cursive';
+// Set by next/font in the root layout; the fallbacks cover a missing variable.
+let FONT_HEAD = '"Dela Gothic One", "Hiragino Sans", "Noto Sans JP", sans-serif';
+let FONT_HAND = '"Yomogi", "Klee One", cursive';
+
+function resolveFonts() {
+  if (typeof document === "undefined") return;
+  const css = getComputedStyle(document.documentElement);
+  const head = css.getPropertyValue("--font-thumb-head").trim();
+  const hand = css.getPropertyValue("--font-thumb-hand").trim();
+  if (head) FONT_HEAD = `${head}, "Hiragino Sans", "Noto Sans JP", sans-serif`;
+  if (hand) FONT_HAND = `${hand}, cursive`;
+}
 
 export type ThemeId = "caution" | "alert" | "deepblue";
 
@@ -416,12 +426,29 @@ export function renderThumbnail(ctx: CanvasRenderingContext2D, copy: ThumbCopy, 
   ctx.restore();
 }
 
-/** Makes sure the web fonts (only the glyphs in use) are ready before drawing. */
+/** Every kana plus ASCII: loading these pulls in the glyph files most thumbnails need. */
+const WARM =
+  "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽぁぃぅぇぉっゃゅょ" +
+  "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビブベボパピプペポァィゥェォッャュョー" +
+  "、。！？「」・×ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%";
+
+/** Makes sure the fonts (only the glyph files in use) are ready before drawing. */
 export async function loadFonts(copy: ThumbCopy) {
   if (typeof document === "undefined" || !document.fonts) return;
+  resolveFonts();
   const head = [copy.main, copy.sub, ...copy.tags].join("");
   await Promise.all([
-    document.fonts.load(`40px "Dela Gothic One"`, head || "あ"),
-    document.fonts.load(`40px "Yomogi"`, copy.comment || "あ"),
+    document.fonts.load(`40px ${FONT_HEAD}`, head || "あ"),
+    document.fonts.load(`40px ${FONT_HAND}`, copy.comment || "あ"),
+  ]).catch(() => undefined);
+}
+
+/** Fetches the common glyph files in the background so they are cached for offline use. */
+export function warmFonts() {
+  if (typeof document === "undefined" || !document.fonts) return;
+  resolveFonts();
+  void Promise.all([
+    document.fonts.load(`40px ${FONT_HEAD}`, WARM),
+    document.fonts.load(`40px ${FONT_HAND}`, WARM),
   ]).catch(() => undefined);
 }
