@@ -5,10 +5,6 @@ build/
 *.tsbuildinfo
 next-env.d.ts
 
-# Runtime state: generated images, job history, uploaded references.
-# Excluding the contents rather than the directory keeps .gitkeep tracked.
-/data/*
-!/data/.gitkeep
 
 .env
 .env.local

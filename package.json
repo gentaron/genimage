@@ -1,8 +1,8 @@
 {
   "name": "genimage",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "GenImage Studio — a self-hostable AI image generation studio for Illustrious/NoobAI-XL checkpoints and LoRA stacks.",
+  "description": "Eureka Thumb — 文章を入れるだけで、文字だけの派手なブログサムネ(1280×670)を作るツール。",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,10 +11,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@netlify/blobs": "^11.0.3",
+    "@anthropic-ai/sdk": "^0.133.0",
     "next": "16.3.4",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",

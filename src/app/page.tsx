@@ -1,5 +1,5 @@
-import { Studio } from "@/components/studio/Studio";
+import ThumbMaker from "@/components/ThumbMaker";
 
-export default function StudioPage() {
-  return <Studio />;
+export default function Page() {
+  return <ThumbMaker />;
 }
