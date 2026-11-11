@@ -54,3 +54,17 @@ src/lib/copy.ts                文字数制限と禁止語の除去
 ```
 
 フォント: Dela Gothic One(見出し)、Yomogi(手書きの一言)。`next/font` でビルド時に取り込み、アプリから配信。
+
+<!-- ecosystem:begin (自動生成: gentaron/infocollect の ecosystem/registry.json から。手で直さない) -->
+
+## つながり
+
+gentaron のリポジトリ群のうち **発信パイプライン** の一つ。Eureka Thumb — 記事を貼るだけの文字サムネメーカー。
+
+- **受け取る**: [infocollect](https://github.com/gentaron/infocollect)（記事）、[genesisvault](https://github.com/gentaron/genesisvault)（記事）、[Gentarog](https://github.com/gentaron/Gentarog)（記事）
+- **同じ島**: [IDEAZ](https://github.com/gentaron/IDEAZ)、[VAIZ](https://github.com/gentaron/VAIZ)、[SAIZ](https://github.com/gentaron/SAIZ)、[seo](https://github.com/gentaron/seo)
+- **前身**: [imgprompt](https://github.com/gentaron/imgprompt)
+
+全体の地図 → [ecosystem](https://github.com/gentaron/infocollect/blob/HEAD/ecosystem/README.md)
+
+<!-- ecosystem:end -->

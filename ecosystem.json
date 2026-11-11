@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/gentaron/infocollect/HEAD/ecosystem/schema.json",
+  "schema": 1,
+  "name": "genimage",
+  "group": "pipeline",
+  "groupLabel": "発信パイプライン",
+  "status": "active",
+  "role": "Eureka Thumb — 記事を貼るだけの文字サムネメーカー",
+  "stack": "Next.js · Netlify",
+  "produces": [
+    "thumbnails"
+  ],
+  "consumes": [
+    "blog"
+  ],
+  "upstream": [
+    {
+      "repo": "infocollect",
+      "flows": [
+        "blog"
+      ],
+      "url": "https://github.com/gentaron/infocollect"
+    },
+    {
+      "repo": "genesisvault",
+      "flows": [
+        "blog"
+      ],
+      "url": "https://github.com/gentaron/genesisvault"
+    },
+    {
+      "repo": "Gentarog",
+      "flows": [
+        "blog"
+      ],
+      "url": "https://github.com/gentaron/Gentarog"
+    }
+  ],
+  "downstream": [],
+  "siblings": [
+    "IDEAZ",
+    "genesisvault",
+    "Gentarog",
+    "VAIZ",
+    "SAIZ",
+    "seo"
+  ],
+  "predecessors": [
+    "imgprompt"
+  ],
+  "hub": {
+    "repo": "https://github.com/gentaron/infocollect",
+    "map": "https://github.com/gentaron/infocollect/blob/HEAD/ecosystem/README.md",
+    "kb": "https://raw.githubusercontent.com/gentaron/infocollect/HEAD/docs/kb",
+    "mcp": [
+      "infocollect-kb",
+      "forge"
+    ]
+  }
+}
