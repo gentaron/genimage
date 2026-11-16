@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   description: "文章を貼るだけで、文字だけの派手なブログサムネ(1280×670)を作るツール。",
   applicationName: "Eureka Thumb",
   appleWebApp: { capable: true, title: "Eureka Thumb", statusBarStyle: "black-translucent" },
-  icons: { apple: "/icons/apple-touch-icon.png" },
+  icons: { icon: "/icons/eureka/favicon.ico", apple: "/icons/eureka/apple-touch-icon.png" },
   formatDetection: { telephone: false },
 };
 
