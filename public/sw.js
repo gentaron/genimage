@@ -2,8 +2,8 @@
 // offline. Thumbnails are drawn in the browser, so with the page, scripts and
 // self-hosted fonts (all under /_next/static) cached the whole tool works without a connection (the AI step falls
 // back to the built-in keyword extractor).
-const VERSION = "eureka-thumb-v2";
-const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
+const VERSION = "eureka-thumb-v3";
+const SHELL = ["/", "/manifest.webmanifest", "/icons/eureka/icon-192.png", "/icons/eureka/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
